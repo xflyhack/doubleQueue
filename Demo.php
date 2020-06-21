@@ -778,12 +778,9 @@ class sendMsgQueueRedis extends ReliableQueue
      */
     public function goPrintQueue()
     {
-        $config = [
-            'key'       => 'sunxs_send_mail_left_list',
-            'rListKey'  => 'sunxs_send_mail_right_list',
-        ];
+        $mailRedisObj = new sendMailQueueRedis();
+        $config = $mailRedisObj->getConfig();
         $key = $config['key'];
-
         $lua = <<<LUA
 return redis.call("RPOPLPUSH",KEYS[1],KEYS[2])
 LUA;
@@ -829,9 +826,10 @@ class sendMailQueueRedis extends ReliableQueue
      */
     public function lremList($id)
     {
+        $redisConfig = $this->getConfig();
         $config = [
-            'key'       => 'sunxs_send_mail_left_list',
-            'rListKey'  => 'sunxs_send_mail_right_list',
+            'key'       => $redisConfig['key'],
+            'rListKey'  => $redisConfig['rListKey'],
         ];
         $key = $config['rListKey'];
         $lua = <<<LUA
