@@ -7,15 +7,15 @@ use App\Model\Redis;
 
 class Controller
 {
-    public $errorMsg = '';
+    public $errorMsg = ''; // 错误消息
+    public $fileName = 'log.log';
     public function __construct()
     {
-
         $this->__checkRedis();
     }
 
     /**
-     * Redis扩展检测
+     * Redis服务检测
      * @auth sunxs <3762820@qq.com>
      * @date 2020-06-21 2:50 下午
      */
@@ -24,11 +24,10 @@ class Controller
         if(!class_exists('Redis')) {
             exit('Redis ext not found!');
         }
-
-       $config = [
-            'host' => '127.0.0.1',
-            'port' => 6379,
-            'password'=>'',
+        $config = [
+            'host'      => '127.0.0.1',
+            'port'      => 6379,
+            'password'  => '',
         ];
         $attr = [
             'dbIndex' => 0,
@@ -51,7 +50,7 @@ class Controller
      */
     protected function responseSucc($data)
     {
-        return ['stat' => 1, 'data' => $data];
+        echo json_encode(['stat' => 1, 'data' => $data],256);
     }
 
     /**
@@ -75,43 +74,25 @@ class Controller
         return $this->errorMsg;
     }
 
-}
-
-namespace App;
-class Order extends Controller
-{
     /**
-     * 生成订单
+     * 记录文件日志
      * @auth sunxs <3762820@qq.com>
-     * @date 2020-06-21 3:05 下午
-     * @throws \Exception
+     * @date 2020-06-21 4:01 下午
+     * @param $content
+     * @param string $fileName
+     * @return bool
      */
-    public function makeOrder()
+    public function log($content,$fileName='')
     {
-        $num = 1;
-        for ($i=0;$i<=$num;$i++){
-            $orderInfo = rand(1000,9999);
-            $this->pushMsg($orderInfo);
+        if(empty($content)) return false;
+        if(empty($fileName)) $fileName = $this->fileName;
+
+        if(is_array($content) || is_object($content)) {
+            file_put_contents($fileName,print_r($content,true) ,FILE_APPEND);
+        }else{
+            file_put_contents($fileName,$content . PHP_EOL ,FILE_APPEND);
         }
 
-        echo "系统生成{$num}个订单成功\r\n\r\n\r\n";
-    }
-
-
-    /**
-     * 订单消息加入队列
-     * @auth sunxs <3762820@qq.com>
-     * @date 2020-06-21 11:55 上午
-     * @param string $msg
-     * @return bool
-     * @throws \Exception
-     */
-    private function pushMsg($msg='')
-    {
-        // 支持批量插入
-        if(empty($msg)) return false;
-        $invoiceOpen = new sendMsg();
-        $invoiceOpen->publish($msg);
         return true;
     }
 }
@@ -121,24 +102,22 @@ class Order extends Controller
  * Class BaseController
  */
 namespace App;
+
 abstract class  BaseController  extends Controller
 {
-
     protected $_time;
     protected $_config;
 
     protected $m = null;
-
     public function __construct()
     {
         parent::__construct();
-        $this->_time = time();
-        $this->_config = $this->getConfig();
+        $this->_time    = time();
+        $this->_config  = $this->getConfig();
 
         if(!$this->_config['redisModelPath']) {
-            throw new \Exception("miss redisModelPath");
+            throw new \Exception("Miss redisModelPath");
         }
-
         // 加载这个实例
         $this->m = new $this->_config['redisModelPath'];
     }
@@ -169,6 +148,7 @@ abstract class  BaseController  extends Controller
      */
     protected abstract function dealBlock($str);
 
+
     /**
      * 添加数据到队列
      * @auth sunxs <3762820@qq.com>
@@ -183,7 +163,7 @@ abstract class  BaseController  extends Controller
     }
 
     /**
-     * 队列消费者
+     * 队列消费者（发送短信、发送邮件等任务的入口）
      * @auth sunxs <3762820@qq.com>
      * @date 2020-06-20 10:14 上午
      * @return bool
@@ -191,7 +171,6 @@ abstract class  BaseController  extends Controller
     public function consume()
     {
         // get_class_methods($this)
-
         $className = $this->getClassName();
         // 将失败队列数据转移到预执行队列( All right data  ==> left queue)
         $this->mvRList();
@@ -204,15 +183,17 @@ abstract class  BaseController  extends Controller
             }
             // 具体的任务实现
             $result = $this->doMethod($res);
-
             if($result) {
+                // 执行成功的回调
                 $this->succeed($res);
             }else{
-                // 加入到回滚队列
+                // 加入到对应的回滚队列
                 $this->m->goBack($res);
             }
+
             $incrStringParam = $result . ',' . $this->_time;
-            if($this->dealBlock($incrStringParam) ==false) {
+            // 单条消息重试次数上限阈值 推送报警
+            if($this->dealBlock($incrStringParam) == false) {
                 exit($className . '执行失败~推送报警');
             }
         }
@@ -233,12 +214,17 @@ abstract class  BaseController  extends Controller
         }
     }
 
+    /**
+     * 获取调用类
+     * @auth sunxs <3762820@qq.com>
+     * @date 2020-06-21 4:09 下午
+     * @return mixed
+     */
     private function getClassName()
     {
         $str = get_called_class();
         $classNameRes = explode('\\',$str);
-        $className = array_pop($classNameRes);
-        return $className;
+        return array_pop($classNameRes);
     }
 
 }
@@ -255,7 +241,7 @@ class sendMsg extends BaseController
     {
         return [
             'redisModelPath'    => 'App\\Fcenter\\sendMsgQueueRedis',
-            'counter'           => 'sxs_open_sendMsg',
+            'counter'           => 'sxs_open_sendMsg_', // 错误统计key
         ];
     }
 
@@ -322,6 +308,7 @@ class sendMsg extends BaseController
             echo "钉钉消息推送成功\r\n";
             return false;
         }
+
         return true;
     }
 }
@@ -403,6 +390,65 @@ class sendMail extends  BaseController
      */
     private function execSendMail()
     {
+        return true;
+    }
+}
+
+
+namespace App;
+/**
+ * 订单生成系统
+ * Class Order
+ * @package App
+ */
+class Order extends Controller
+{
+    /**
+     * 生成订单
+     * @auth sunxs <3762820@qq.com>
+     * @date 2020-06-21 3:05 下午
+     * @throws \Exception
+     */
+    public function makeOrder()
+    {
+        $num = 2;
+        for ($i=1;$i<=$num;$i++){
+            $orderInfo = rand(1000,9999);
+            if (!$this->pushQueueMsg($orderInfo)){
+                // 失败加入日志
+                $this->log($this->getError());
+            };
+        }
+        $msg = "系统生成{$num}个订单成功";
+        $this->responseSucc($msg);
+    }
+
+
+    /**
+     * 订单消息加入队列
+     * @auth sunxs <3762820@qq.com>
+     * @date 2020-06-21 11:55 上午
+     * @param string $msg
+     * @return bool
+     * @throws \Exception
+     */
+    private function pushQueueMsg($msg='')
+    {
+        // 支持批量插入
+        if(empty($msg)){
+            $this->setError('消息体为空');
+            return false;
+        }
+        if(!is_numeric($msg)) {
+            $this->setError('消息体结构必须是整型');
+            return false;
+        }
+        $invoiceOpen = new sendMsg();
+        if(!$invoiceOpen->publish($msg)){
+            $this->setError('加入消息失败');
+            return false;
+        };
+
         return true;
     }
 }
@@ -587,6 +633,12 @@ class Redis
 
 namespace App\Fcenter;
 use App\Model\Redis;
+
+/**
+ * Class ReliableQueue
+ * @package App\Fcenter
+ * @return ReliableQueue
+ */
 abstract class ReliableQueue extends Redis
 {
 
@@ -602,7 +654,6 @@ abstract class ReliableQueue extends Redis
     {
         $this->_time = time();
         $this->_configStr = $this->getConfig();
-
         $this->_queue = Redis::getInstance($this->_configStr['config'],$this->_configStr['attr']);
         $this->_lList = $this->_configStr['key'];
         $this->_rList = $this->_configStr['rListKey'];
@@ -610,11 +661,13 @@ abstract class ReliableQueue extends Redis
 
     abstract protected function getConfig();
 
+
     /**
      * 从预执行队列中获取数据
      * @auth sunxs <3762820@qq.com>
-     * @date 2020-06-21 2:41 下午
+     * @date 2020-06-21 4:34 下午
      * @return mixed
+     * @return ReliableQueue
      */
     public function consumeReady()
     {
