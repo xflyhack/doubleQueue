@@ -191,7 +191,7 @@ abstract class  BaseController  extends Controller
                 $this->m->goBack($res);
             }
 
-            $incrStringParam = $result . ',' . $this->_time;
+            $incrStringParam = $res . ',' . $this->_time;
             // 单条消息重试次数上限阈值 推送报警
             if($this->dealBlock($incrStringParam) == false) {
                 exit($className . '执行失败~推送报警');
@@ -648,8 +648,6 @@ abstract class ReliableQueue extends Redis
     protected $_time;
     private $_configStr;
 
-    const HASH_KEY = 'sunxs_list';
-
     public function __construct()
     {
         $this->_time = time();
@@ -672,9 +670,9 @@ abstract class ReliableQueue extends Redis
     public function consumeReady()
     {
         $lua = <<<LUA
-return redis.call("RPOPLPUSH",KEYS[2],KEYS[3])
+return redis.call("RPOPLPUSH",KEYS[1],KEYS[2])
 LUA;
-        return   $this->_queue->evalLua($lua,[self::HASH_KEY, $this->_lList, $this->_rList],3);
+        return   $this->_queue->evalLua($lua,[ $this->_lList, $this->_rList],2);
     }
 
     /**
@@ -686,9 +684,9 @@ LUA;
     public function goBack()
     {
         $lua = <<<LUA
-return redis.call("RPOPLPUSH",KEYS[2],KEYS[3])
+return redis.call("RPOPLPUSH",KEYS[1],KEYS[2])
 LUA;
-        return  $this->_queue->evalLua($lua,[self::HASH_KEY, $this->_rList, $this->_lList],3);
+        return  $this->_queue->evalLua($lua,[ $this->_rList, $this->_lList],2);
     }
 
     /**
@@ -718,27 +716,27 @@ LUA;
     public function mvRList()
     {
         $lua = <<<LUA
-return redis.call("RPOPLPUSH",KEYS[2],KEYS[3])
+return redis.call("RPOPLPUSH",KEYS[1],KEYS[2])
 LUA;
-        return  $this->_queue->evalLua($lua,[self::HASH_KEY, $this->_rList, $this->_lList],3);
+        return  $this->_queue->evalLua($lua,[$this->_rList, $this->_lList],2);
     }
 
     /**左右队列数据交换
      * @auth sunxs <3762820@qq.com>
      * @date 2020-06-21 2:40 下午
-     * @param string $id
+     * @param string $queueName
      * @param $value
      * @return mixed
      */
-    public function publish($id = '', $value)
+    public function publish($queueName = '', $value)
     {
-        if(empty($id)){
-            $id = $this->_lList;
+        if(empty($queueName)){
+            $queueName = $this->_lList;
         }
         $lua = <<<LUA
-return redis.call("lPush",KEYS[2],ARGV[1])
+return redis.call("lPush",KEYS[1],ARGV[1])
 LUA;
-        return   $this->_queue->evalLua($lua,[self::HASH_KEY, $id, $value],2);
+        return   $this->_queue->evalLua($lua,[ $queueName, $value],1);
     }
 }
 
@@ -751,20 +749,20 @@ use App\sendMail;
 class sendMsgQueueRedis extends ReliableQueue
 {
     /**
-     * 获取请求申请发票Redis数据
+     * 获取发送消息配置文件
      * @auth sunxs <3762820@qq.com>
      * @date 2020-06-20 4:39 下午
      */
     public function getConfig()
     {
         return [
-            'key'           => 'baiwang_invoice_open_left_list',
-            'rListKey'      => 'baiwang_invoice_open_right_list',
+            'key'           => 'sunxs_sendMsg_left_list',
+            'rListKey'      => 'sunxs_sendMsg_right_list',
             'type'          => 'list',
             'config'        => [
                     'host'      => '127.0.0.1',
                     'port'      => 6379,
-                    'password'  =>'',
+                    'password'  => '',
             ],
             'attr'          => [
                     'dbIndex' => 0,
@@ -781,15 +779,15 @@ class sendMsgQueueRedis extends ReliableQueue
     public function goPrintQueue()
     {
         $config = [
-            'key' => 'sunxs_send_mail_left_list',
-            'rListKey' => 'sunxs_send_mail_right_list',
+            'key'       => 'sunxs_send_mail_left_list',
+            'rListKey'  => 'sunxs_send_mail_right_list',
         ];
         $key = $config['key'];
 
         $lua = <<<LUA
-return redis.call("RPOPLPUSH",KEYS[2],KEYS[3])
+return redis.call("RPOPLPUSH",KEYS[1],KEYS[2])
 LUA;
-        return   $this->_queue->evalLua($lua,[self::HASH_KEY, $this->_rList,$key],3);
+        return   $this->_queue->evalLua($lua,[$this->_rList,$key],2);
     }
 
 
@@ -837,9 +835,9 @@ class sendMailQueueRedis extends ReliableQueue
         ];
         $key = $config['rListKey'];
         $lua = <<<LUA
-return redis.call("lrem",KEYS[2],ARGV[1],ARGV[2])
+return redis.call("lrem",KEYS[1],ARGV[1],ARGV[2])
 LUA;
-        return $this->_queue->evalLua($lua,[self::HASH_KEY,$key,0,$id],2);
+        return $this->_queue->evalLua($lua,[$key,0,$id],1);
     }
 }
 
@@ -865,7 +863,7 @@ LUA;
     /** Step 1 : make Order */
     $order = new Order();
     $order->makeOrder();
-
+//    exit();
     /** Step 2 :Consume Message */
     $obj = new sendMsg();
     $obj->consume();
